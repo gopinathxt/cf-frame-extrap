@@ -272,7 +272,7 @@ def discover_episodes(data_root: str | Path) -> List[EpisodeIndex]:
         return episodes
 
     # Fallback: gsplat renders + capture CSVs (repo-style layout)
-    renders_root = root / "gsplat_renders_all"
+    renders_root = root / "renders"
     if not renders_root.exists():
         raise FileNotFoundError(
             f"No episodes found under {root}. Expected either episode_xxx/frames + actions.npy, "
@@ -290,10 +290,10 @@ def discover_episodes(data_root: str | Path) -> List[EpisodeIndex]:
     csv_by_key = {p.stem: p for p in csvs}  # capture_01 -> path
 
     render_eps: List[RenderCaptureEpisode] = []
-    for frames_dir in sorted(renders_root.glob("gsplat_renders_capture_*"), key=lambda p: p.name):
+    for frames_dir in sorted(renders_root.glob("renders*"), key=lambda p: p.name):
         if not frames_dir.is_dir():
             continue
-        key = frames_dir.name.replace("gsplat_renders_", "")  # capture_01
+        key = frames_dir.name.replace("renders_", "")  # capture_01
         csv_path = csv_by_key.get(key)
         if csv_path is None:
             raise FileNotFoundError(f"Missing CSV for {key}. Expected {capture_data_dir}/{key}.csv")
