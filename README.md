@@ -2,7 +2,7 @@
 
 Action-conditioned frame extrapolation for low-FPS onboard vision.
 
-Goal: given the last **K** grayscale frames (default **K=3**) and the last **K** actions (**CTBR**, 4 floats), predict the next frame. At runtime, you can roll the model forward to synthesize intermediate frames to feed a vision-based RL policy at a higher effective FPS.
+Goal: given a short history of grayscale frames and actions (**CTBR**, 4 floats), predict a future frame. This repo supports a “spaced history” mode that matches low-FPS cameras: use frames \([t-12,\ t-6,\ t]\) to predict \(t+2\).
 
 ## Dataset layout (recommended)
 
@@ -38,27 +38,52 @@ pip install -r requirements.txt
 
 If `opencv-python` fails to install on your machine, install OS deps (e.g. Ubuntu: `sudo apt-get install -y libgl1`) or swap OpenCV for your preferred image IO backend.
 
-Train:
+Train (spaced history, recommended for low-FPS camera setup):
 
 ```bash
 python -m cf_frame_extrap.train \
   --data_root /path/to/data_root \
   --k 3 \
+  --hist_stride 6 \
+  --pred_horizon 2 \
   --epochs 50 \
   --batch_size 32 \
   --num_workers 4 \
-  --out_dir runs/exp1
+  --out_dir runs/exp_s6_h2
 ```
 
-Rollout (predict forward indefinitely from an initial buffer):
+Teacher-forced inference (uses your existing frames/actions as input history, predicts and saves targets):
+
+```bash
+python -m cf_frame_extrap.infer_dataset \
+  --ckpt runs/exp_s6_h2/best.pt \
+  --data_root /path/to/data_root \
+  --out_dir runs/exp_s6_h2/teacher_forced \
+  --k 3 \
+  --hist_stride 6 \
+  --pred_horizon 2 \
+  --save_gt
+```
+
+Rollout (predict forward indefinitely from an initial buffer; useful for online frame synthesis):
 
 ```bash
 python -m cf_frame_extrap.infer_rollout \
-  --ckpt runs/exp1/best.pt \
+  --ckpt runs/exp_s6_h2/best.pt \
   --k 3 \
   --init_frames_dir /path/to/init_frames \
   --actions_npy /path/to/actions.npy \
-  --out_dir runs/exp1/rollout_preview
+  --out_dir runs/exp_s6_h2/rollout_preview
+```
+
+Single-step prediction from exactly 3 frames + 3 actions:
+
+```bash
+python -m cf_frame_extrap.predict_one \
+  --ckpt runs/exp_s6_h2/best.pt \
+  --img f0.png f1.png f2.png \
+  --action  C0 T0 B0 R0   C1 T1 B1 R1   C2 T2 B2 R2 \
+  --out pred.png
 ```
 
 ## Model

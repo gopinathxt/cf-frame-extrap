@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--height", type=int, default=244)
     p.add_argument("--width", type=int, default=324)
+    p.add_argument("--pred_horizon", type=int, default=2, help="Interpreted as predicting frame t+H from [t-2S,t-S,t].")
 
     p.add_argument("--img", type=str, nargs=3, required=True, help="3 images: oldest -> newest.")
     p.add_argument(
@@ -63,7 +64,7 @@ def main() -> None:
 
     model_cfg = ckpt.get("model_cfg") or {"k": 3}
     cfg = ModelConfig(**model_cfg)
-    cfg.k = 3  # this script is explicitly for 3-frame input
+    cfg.k = 3  # explicitly 3-frame input [t-2S, t-S, t]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ActionConditionedUNet(cfg).to(device)

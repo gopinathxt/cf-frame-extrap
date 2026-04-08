@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--k", type=int, default=3)
     p.add_argument("--height", type=int, default=244)
     p.add_argument("--width", type=int, default=324)
+    p.add_argument("--hist_stride", type=int, default=6, help="History spacing S (use frames t-2S, t-S, t).")
+    p.add_argument("--pred_horizon", type=int, default=2, help="Predict target at t+H.")
 
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch_size", type=int, default=32)
@@ -85,7 +87,15 @@ def main() -> None:
     train_eps, val_eps = split_episodes(episodes, val_ratio=args.val_ratio, seed=args.seed)
 
     # Compute action normalization ONLY on training episodes, store for val+checkpoint
-    action_norm = FrameSequenceDataset(train_eps, k=args.k, height=args.height, width=args.width, train=True).action_norm
+    action_norm = FrameSequenceDataset(
+        train_eps,
+        k=args.k,
+        height=args.height,
+        width=args.width,
+        train=True,
+        hist_stride=args.hist_stride,
+        pred_horizon=args.pred_horizon,
+    ).action_norm
 
     ds_train = FrameSequenceDataset(
         train_eps,
@@ -94,6 +104,8 @@ def main() -> None:
         width=args.width,
         train=True,
         action_norm=action_norm,
+        hist_stride=args.hist_stride,
+        pred_horizon=args.pred_horizon,
     )
     ds_val = FrameSequenceDataset(
         val_eps,
@@ -102,6 +114,8 @@ def main() -> None:
         width=args.width,
         train=False,
         action_norm=action_norm,
+        hist_stride=args.hist_stride,
+        pred_horizon=args.pred_horizon,
     )
 
     dl_train = DataLoader(

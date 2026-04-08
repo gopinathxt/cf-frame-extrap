@@ -336,6 +336,8 @@ class FrameSequenceDataset(Dataset):
         width: int = 324,
         train: bool = True,
         action_norm: Optional[ActionNorm] = None,
+        hist_stride: int = 1,
+        pred_horizon: int = 1,
     ):
         super().__init__()
         self.episodes = list(episodes)
@@ -344,17 +346,30 @@ class FrameSequenceDataset(Dataset):
         self.width = int(width)
         self.train = bool(train)
         self.aug = build_augment(train=train, height=height, width=width)
+        self.hist_stride = int(hist_stride)
+        self.pred_horizon = int(pred_horizon)
+        if self.k != 3:
+            raise ValueError("This dataset currently expects k=3 for spaced history [t-2s, t-s, t].")
+        if self.hist_stride < 1:
+            raise ValueError("hist_stride must be >= 1")
+        if self.pred_horizon < 1:
+            raise ValueError("pred_horizon must be >= 1")
 
         if action_norm is None:
             action_norm = compute_action_norm([ep.actions for ep in self.episodes])
         self.action_norm = action_norm
 
-        # Build a flat index of (episode_id, t) where target is frame t and history is [t-K .. t-1]
+        # Build a flat index of (episode_id, t) where:
+        #   history frames/actions at [t-2S, t-S, t]
+        #   target frame at [t+H]
+        # This matches your low-FPS camera use-case (sample sparse history, predict slightly ahead).
         self.samples: List[Tuple[int, int]] = []
         for ei, ep in enumerate(self.episodes):
-            if ep.T <= self.k:
+            if ep.T <= (2 * self.hist_stride + self.pred_horizon):
                 continue
-            for t in range(self.k, ep.T):
+            t_min = 2 * self.hist_stride
+            t_max = ep.T - self.pred_horizon - 1
+            for t in range(t_min, t_max + 1):
                 self.samples.append((ei, t))
         if len(self.samples) == 0:
             raise ValueError("No valid samples found (need T > K in at least one episode).")
@@ -367,8 +382,9 @@ class FrameSequenceDataset(Dataset):
         ep = self.episodes[ei]
 
         # load images
-        frame_paths = ep.frame_paths[t - self.k : t]
-        target_path = ep.frame_paths[t]
+        s = self.hist_stride
+        frame_paths = [ep.frame_paths[t - 2 * s], ep.frame_paths[t - s], ep.frame_paths[t]]
+        target_path = ep.frame_paths[t + self.pred_horizon]
 
         frames_u8 = [_read_gray(p) for p in frame_paths]  # each [H,W] u8
         target_u8 = _read_gray(target_path)
@@ -391,7 +407,7 @@ class FrameSequenceDataset(Dataset):
         target = target_aug.astype(np.float32)[None, ...] / 255.0  # [1,H,W]
 
         # actions history
-        a_hist = ep.actions[t - self.k : t]  # [K,4]
+        a_hist = np.stack([ep.actions[t - 2 * s], ep.actions[t - s], ep.actions[t]], axis=0)  # [K,4]
         a_hist = self.action_norm.normalize(a_hist).astype(np.float32)
 
         return {

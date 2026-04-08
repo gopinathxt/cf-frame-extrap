@@ -34,3 +34,10 @@ runs/**/meta.json
 runs/**/rollout*/
 runs/**/teacher_forced*/
 
+**.egg-info
+
+**/*.csv
+
+
+#add egg-info files
+**/*.egg-info/

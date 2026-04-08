@@ -25,6 +25,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--k", type=int, default=3)
     p.add_argument("--height", type=int, default=244)
     p.add_argument("--width", type=int, default=324)
+    p.add_argument("--hist_stride", type=int, default=6, help="History spacing S (use frames t-2S, t-S, t).")
+    p.add_argument("--pred_horizon", type=int, default=2, help="Predict target at t+H.")
 
     p.add_argument("--save_gt", action="store_true", help="Also save ground truth frames for easy comparison.")
     p.add_argument("--max_frames_per_episode", type=int, default=-1, help="Limit (after warmup). -1 = all.")
@@ -51,6 +53,8 @@ def infer_episode(
     k: int,
     height: int,
     width: int,
+    hist_stride: int,
+    pred_horizon: int,
     out_dir: Path,
     save_gt: bool,
     max_frames: int,
@@ -63,18 +67,29 @@ def infer_episode(
     loss_ssim = AverageMeter()
 
     # Teacher forcing: history comes from real frames, not predictions.
-    t_end = ep.T
+    if k != 3:
+        raise ValueError("infer_dataset currently expects k=3 for spaced history [t-2S, t-S, t].")
+    t_end = ep.T - pred_horizon
     if max_frames is not None and max_frames > 0:
-        t_end = min(t_end, k + max_frames)
+        # max_frames counts number of predicted targets after the minimum valid t.
+        t_end = min(t_end, (2 * hist_stride) + max_frames)
 
-    for t in tqdm(range(k, t_end), desc=ep.episode_dir.name, leave=False):
+    t_min = 2 * hist_stride
+    for t in tqdm(range(t_min, t_end), desc=ep.episode_dir.name, leave=False):
         frames_hist = np.stack(
-            [_read_gray_01(p, height, width) for p in ep.frame_paths[t - k : t]],
+            [
+                _read_gray_01(ep.frame_paths[t - 2 * hist_stride], height, width),
+                _read_gray_01(ep.frame_paths[t - hist_stride], height, width),
+                _read_gray_01(ep.frame_paths[t], height, width),
+            ],
             axis=0,
         )  # [K,H,W]
-        gt = _read_gray_01(ep.frame_paths[t], height, width)  # [H,W]
+        gt = _read_gray_01(ep.frame_paths[t + pred_horizon], height, width)  # [H,W]
 
-        a_hist = ep.actions[t - k : t]
+        a_hist = np.stack(
+            [ep.actions[t - 2 * hist_stride], ep.actions[t - hist_stride], ep.actions[t]],
+            axis=0,
+        )
         a_hist = action_norm.normalize(a_hist).astype(np.float32)
 
         frames_t = torch.from_numpy(frames_hist[None, ...]).to(device)
@@ -88,12 +103,12 @@ def infer_episode(
         loss_ssim = loss_ssim.update(ssim(pred_t, gt_t).mean().item(), n=1)
 
         pred_u8 = (pred.clamp(0, 1).cpu().numpy() * 255.0).astype(np.uint8)
-        cv2.imwrite(str(pred_dir / f"{t:06d}.png"), pred_u8)
+        cv2.imwrite(str(pred_dir / f"{t + pred_horizon:06d}.png"), pred_u8)
         if gt_dir is not None:
             gt_u8 = (np.clip(gt, 0, 1) * 255.0).astype(np.uint8)
-            cv2.imwrite(str(gt_dir / f"{t:06d}.png"), gt_u8)
+            cv2.imwrite(str(gt_dir / f"{t + pred_horizon:06d}.png"), gt_u8)
 
-    return {"psnr": loss_psnr.avg, "ssim": loss_ssim.avg, "n": int(max(0, t_end - k))}
+    return {"psnr": loss_psnr.avg, "ssim": loss_ssim.avg, "n": int(max(0, t_end - t_min))}
 
 
 @torch.no_grad()
@@ -139,6 +154,8 @@ def main() -> None:
             k=args.k,
             height=args.height,
             width=args.width,
+            hist_stride=args.hist_stride,
+            pred_horizon=args.pred_horizon,
             out_dir=out_dir,
             save_gt=bool(args.save_gt),
             max_frames=args.max_frames_per_episode,
