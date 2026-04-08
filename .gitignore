@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+
+# OS/editor
+.DS_Store
+.vscode/
+
+# Archives
+*.zip
+
+# Data / renders (images)
+gsplat_renders_all/
+gsplat_renders_capture_*/
+data/
+**/*.png
+**/*.jpg
+**/*.jpeg
+
+# Training outputs (keep best checkpoint)
+runs/
+!runs/**/
+!runs/**/best.pt
+
+# Ignore other checkpoints/logs inside runs
+runs/**/last.pt
+runs/**/checkpoints/
+runs/**/tb/
+runs/**/meta.json
+runs/**/rollout*/
+runs/**/teacher_forced*/
+
