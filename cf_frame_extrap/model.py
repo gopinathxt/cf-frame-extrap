@@ -210,6 +210,11 @@ class ActionConditionedUNet(nn.Module):
                 h = self.upsamples[si - 1](h)
             for b in blocks:
                 s = skips.pop()
+                # Down/upsampling with odd spatial sizes (e.g. 244x324) can cause
+                # off-by-one mismatches between decoder feature maps and skip maps.
+                # Resize decoder map to skip resolution before concatenation.
+                if h.shape[-2:] != s.shape[-2:]:
+                    h = F.interpolate(h, size=s.shape[-2:], mode="nearest")
                 h = torch.cat([h, s], dim=1)
                 h = b(h, cond)
 

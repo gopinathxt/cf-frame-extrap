@@ -261,46 +261,75 @@ class RenderCaptureEpisode:
 
 
 def discover_episodes(data_root: str | Path) -> List[EpisodeIndex]:
+    """
+    Discovers episodes from a root directory, supporting multiple layouts.
+    Layout 1 (preferred): data_root/episode_xxx/{frames/*.png, actions.npy}
+    Layout 2 (fallback): data_root/{csv_dir}/{name}.csv, data_root/{renders_dir}/{name}/*.png
+    """
     root = Path(data_root)
     if not root.exists():
         raise FileNotFoundError(f"data_root not found: {root}")
+
+    # Layout 1: Pre-processed episodes with actions.npy
     episodes: List[EpisodeIndex] = []
     for p in sorted(root.iterdir(), key=lambda x: x.name):
         if p.is_dir() and (p / "frames").exists() and (p / "actions.npy").exists():
-            episodes.append(EpisodeIndex(p))
+            try:
+                episodes.append(EpisodeIndex(p))
+            except (FileNotFoundError, ValueError):
+                continue  # Skip invalid/empty episode dirs
     if episodes:
         return episodes
 
-    # Fallback: gsplat renders + capture CSVs (repo-style layout)
-    renders_root = root / "renders"
-    if not renders_root.exists():
+    # Layout 2: Renders and CSVs in separate directories
+    # e.g., data_root/csv/*.csv and data_root/renders/name/*.png
+    csv_dirs = [d for d in root.iterdir() if d.is_dir() and list(d.glob("*.csv"))]
+    render_dirs = [d for d in root.iterdir() if d.is_dir() and list(d.glob("*/*.*"))]
+
+    if not csv_dirs or not render_dirs:
         raise FileNotFoundError(
-            f"No episodes found under {root}. Expected either episode_xxx/frames + actions.npy, "
-            f"or {renders_root} for gsplat renders."
+            f"No episodes found under {root}. Searched for pre-processed episodes "
+            "and for separate csv/render directories, but found none."
         )
 
-    capture_data_dir = root / "capture_data"
-    csvs = sorted(capture_data_dir.glob("capture_*.csv"))
-    if not csvs:
-        capture_zip = root / "capture.zip"
-        if not capture_zip.exists():
-            raise FileNotFoundError(f"Missing capture CSVs in {capture_data_dir} and missing zip: {capture_zip}")
-        csvs = extract_capture_zip(capture_zip, capture_data_dir)
+    # For simplicity, assume the first found directories are the correct ones.
+    csv_dir = csv_dirs[0]
+    renders_root = render_dirs[0]
 
-    csv_by_key = {p.stem: p for p in csvs}  # capture_01 -> path
+    csv_paths = sorted(csv_dir.glob("*.csv"))
+    if not csv_paths:
+        # Fallback for zipped CSVs, similar to original logic
+        capture_zip = root / f"{csv_dir.name}.zip"
+        if not capture_zip.exists():
+            raise FileNotFoundError(f"No CSVs in {csv_dir} and no zip at {capture_zip}")
+        csv_paths = extract_capture_zip(capture_zip, csv_dir)
+
+    csv_by_key = {p.stem: p for p in csv_paths}
 
     render_eps: List[RenderCaptureEpisode] = []
-    for frames_dir in sorted(renders_root.glob("renders*"), key=lambda p: p.name):
+    for frames_dir in sorted(renders_root.iterdir()):
         if not frames_dir.is_dir():
             continue
-        key = frames_dir.name.replace("renders_", "")  # capture_01
+        key = frames_dir.name
         csv_path = csv_by_key.get(key)
         if csv_path is None:
-            raise FileNotFoundError(f"Missing CSV for {key}. Expected {capture_data_dir}/{key}.csv")
-        render_eps.append(RenderCaptureEpisode(frames_dir=frames_dir, csv_path=csv_path))
+            # Try to find a matching zip if CSVs were not found loose
+            if not csv_paths and (root / f"{csv_dir.name}.zip").exists():
+                csv_paths = extract_capture_zip(root / f"{csv_dir.name}.zip", csv_dir)
+                csv_by_key = {p.stem: p for p in csv_paths}
+                csv_path = csv_by_key.get(key)
 
-    if len(render_eps) == 0:
-        raise FileNotFoundError(f"No render episodes found under {renders_root}")
+        if csv_path:
+            try:
+                render_eps.append(RenderCaptureEpisode(frames_dir=frames_dir, csv_path=csv_path))
+            except (FileNotFoundError, ValueError):
+                continue  # Skip invalid/empty render dirs
+        else:
+            print(f"Warning: Missing CSV for render directory '{key}'. Skipping.")
+
+    if not render_eps:
+        raise FileNotFoundError(f"No valid render episodes found matching CSVs under {root}")
+
     return render_eps  # type: ignore[return-value]
 
 
